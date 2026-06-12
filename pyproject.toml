@@ -1,0 +1,35 @@
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gCRL"
+version = "0.0.1"
+description = "gCRL-AE and gCRL-VAE: Causal Representation Learning with GRN priors"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Your Name" }]
+
+dependencies = [
+  "anndata>=0.10",
+  "scanpy>=1.9",
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "torch",
+  "matplotlib",
+  "tqdm",
+  "umap-learn",
+  "tomli>=1.2.0; python_version<'3.11'",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[project.scripts]
+gcrl-batch-sim = "gcrl.cli.batch_run_simulations:main"

@@ -1,0 +1,5 @@
+0_data_preprocessing.ipynb: basic pre-processing (normalization, HVG identification, etc.), unless already performed.
+In our case skipped as we use the data preprocessing from SENA paper
+1_GRN_calculation.ipynb: computing the GRN with CellOracle
+2_TF_module_identification.ipynb: identifying modules in the GRN
+3_data_preparation.ipynb: preparing data splitting, adding TF modules to the adata object, etc.

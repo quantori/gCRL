@@ -1,0 +1,7 @@
+# Project-level configuration for gCRL
+
+[paths]
+# Relative path to the SERGIO repo within this project
+# You should have cloned SERGIO into gCRL/ext_tools/SERGIO
+sergio_dir = "ext_tools/SERGIO"
+

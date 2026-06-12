@@ -1,0 +1,41 @@
+{
+  "community_col": "community",
+  "kind_col": "kind",
+  "intervention_col": "intervention",
+  "cell_type_col": "cell_type",
+  "cell_type": null,
+  "input_mode": "TF",
+  "reconstruct_all": true,
+  "latent_dim": 6,
+  "hidden_dims": [
+    256
+  ],
+  "batch_size": 1024,
+  "num_epochs": 100,
+  "lr": 0.001,
+  "lr_step": 100,
+  "lr_gamma": 0.5,
+  "weight_decay": 0.001,
+  "device": "cuda",
+  "seed": 42,
+  "val_frac": 0.1,
+  "n_train": 31544,
+  "n_val": 3504,
+  "reference_query": "intervention == \"unperturbed\"",
+  "standardize": "zscore_ref",
+  "n_cells": 35048,
+  "n_genes": 2070,
+  "obs_names_preview": [
+    "TGCGGGTTCTAGAGTC-5-0-0",
+    "TGTATTCAGAAGGCCT-5-0-0",
+    "CATATTCGTGAAAGAG-3-0-0",
+    "CTCGGGAAGCACCGCT-2-0-0",
+    "ATCTACTGTTATGCGT-1-0-0",
+    "AACTTTCGTACGAAAT-5-0-0",
+    "GCAAACTCATTTCACT-5-0-0",
+    "TCCCGATCAAGTACCT-2-0-0",
+    "AGTTGGTGTCTAGAGG-5-0-0",
+    "CAAGAAATCGTATCAG-1-0-0"
+  ],
+  "timestamp": "2026-04-23 15:52:28"
+}

@@ -1,0 +1,23 @@
+# Core dependencies (duplicated from pyproject for convenience)
+anndata>=0.10
+scanpy>=1.9
+numpy
+pandas
+scikit-learn
+torch
+matplotlib
+tqdm
+umap-learn
+tomli>=1.2.0; python_version<"3.11"
+
+# Development / testing
+jupyterlab
+notebook
+pytest
+black
+flake8
+isort
+pre-commit
+pytest
+pytest-cov
+

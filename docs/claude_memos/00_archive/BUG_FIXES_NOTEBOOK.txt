@@ -1,0 +1,112 @@
+# Bug Fixes for 2_Norman_VAE.ipynb
+
+## Issue Reported
+AttributeError when accessing model attributes directly:
+```python
+model.z_dim  # ❌ FAILED - AttributeError: 'GCRLVAE' object has no attribute 'z_dim'
+```
+
+## Root Cause
+The GCRLVAE model stores its configuration in `self.cfg` (a GCRLVAEConfig object), not as direct attributes on the model instance.
+
+From gcrl_vae.py:
+```python
+class GCRLVAE(nn.Module):
+    def __init__(self, cfg: GCRLVAEConfig, device: Optional[torch.device] = None):
+        super().__init__()
+        self.cfg = cfg  # <-- Config stored here
+        # ...
+```
+
+## Fix Applied
+
+Changed cell `07396a4c-70a2-43d8-94b9-c6fb96b70e6a` to access attributes via `model.cfg`:
+
+### Before (Broken):
+```python
+print(f"Latent dimension (z_dim): {model.z_dim}")
+print(f"Intervention dimension (c_dim): {model.c_dim}")
+print(f"Input dimension: {model.input_dim} (TFs only)")
+print(f"Output dimension: {model.output_dim} (all genes)")
+if hasattr(model, 'ct_dim'):
+    print(f"Cell-type dimension: {model.ct_dim}")
+```
+
+### After (Fixed):
+```python
+print(f"Latent dimension (z_dim): {model.cfg.z_dim}")
+print(f"Intervention dimension (c_dim): {model.cfg.c_dim}")
+print(f"Input dimension: {model.cfg.input_dim} (TFs only)")
+print(f"Output dimension: {model.cfg.output_dim} (all genes)")
+if hasattr(model.cfg, 'ct_dim'):
+    print(f"Cell-type dimension: {model.cfg.ct_dim}")
+print(f"\nDAG causal matrix G shape: {model.G.shape}")
+print(f"Intervention mapping: {model.cfg.intervention_mapping}")
+print(f"Using polynomial decoder: {model.cfg.use_polynomial_decoder}")
+```
+
+## Verification
+
+All other cells in the notebook are correct:
+- ✅ `model.G` - Direct parameter access (correct)
+- ✅ `torch.save(model, ...)` - Model serialization (correct)
+- ✅ All visualization cells use `model.G` correctly
+- ✅ No other direct attribute access issues
+
+## Expected Output After Fix
+
+```
+Model: GCRLVAE(
+  (encoder): Sequential(...)
+  (fc_mu): Linear(...)
+  (fc_var): Linear(...)
+  (decoder_linear): Linear(...)
+  (decoder_quadratic): Linear(...)
+)
+
+Latent dimension (z_dim): 7
+Intervention dimension (c_dim): 20
+Input dimension: 139 (TFs only)
+Output dimension: 2701 (all genes)
+Cell-type dimension: 1
+
+DAG causal matrix G shape: torch.Size([7, 7])
+Intervention mapping: hard
+Using polynomial decoder: True
+```
+
+## Related Model Attributes
+
+### Direct Access (on model instance):
+- `model.G` - Causal matrix (nn.Parameter)
+- `model.encoder` - Encoder network
+- `model.fc_mu` - Mean projection layer
+- `model.fc_var` - Variance projection layer
+- `model.decoder_linear` - Linear decoder layer
+- `model.decoder_quadratic` - Quadratic decoder layer
+- `model.c_shift` - Intervention shift parameters
+- `model.tf_index` - TF name to index mapping
+- `model.tf_to_latent` - TF to latent dimension mapping
+- `model.ct_index` - Cell type to index mapping
+
+### Via Config (model.cfg):
+- `model.cfg.input_dim` - Number of input features (TFs)
+- `model.cfg.z_dim` - Latent dimension (p+1)
+- `model.cfg.c_dim` - Number of intervention TFs
+- `model.cfg.output_dim` - Number of output features (all genes)
+- `model.cfg.ct_dim` - Number of cell types
+- `model.cfg.intervention_mapping` - "hard" or "soft"
+- `model.cfg.use_polynomial_decoder` - Boolean
+- `model.cfg.hidden_enc` - Encoder hidden dimensions tuple
+
+## Testing Recommendation
+
+After this fix, run the notebook cells in order:
+1. Data loading and preprocessing (cells 1-9)
+2. Auto-configuration (cell 10-11)
+3. Training (cell 12) - should complete successfully with progress bars
+4. Model inspection (cell 13) - should now work without errors
+5. Model saving (cell 14)
+6. Visualization cells (15-16) - should work correctly
+
+All cells should now execute without AttributeError exceptions.

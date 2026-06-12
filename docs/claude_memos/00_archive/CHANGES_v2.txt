@@ -1,0 +1,345 @@
+# gCRL-VAE Version 2: Major Architecture and Training Changes
+
+## Summary of Changes
+
+This document outlines the major changes made to gCRL-VAE architecture and training procedure based on alignment with discrepancy-VAE principles and biological interpretability requirements.
+
+---
+
+## 1. TF-Only Input, All-Gene Output
+
+**Change**: Encoder now accepts ONLY TF expression; Decoder outputs ALL genes (TF + TG)
+
+**Before**:
+- Encoder input: All genes (n_genes)
+- Decoder output: All genes (n_genes)
+
+**After**:
+- Encoder input: TF expression only (n_TFs)
+- Decoder output: All genes (n_genes = n_TFs + n_TGs)
+
+**Rationale**:
+- TFs are the causal drivers of gene expression
+- Forces model to learn explicit TF → gene regulatory mappings
+- Reduces encoder input dimensionality
+- More biologically interpretable
+
+**Implementation**:
+- Training script extracts TF indices: `tf_idx_all = np.where(adata.var['kind'] == 'TF')[0]`
+- Model config: `input_dim=n_TFs`, `output_dim=n_genes`
+- DataLoader provides both: `x_tf` (input) and `x_all` (target)
+
+---
+
+## 2. Polynomial Decoder (Linear + Quadratic Terms)
+
+**Change**: Decoder is now polynomial (linear + quadratic) instead of MLP with non-linear activations
+
+**Before**:
+```python
+self.decoder = nn.Sequential(
+    nn.Linear(in_dec, hidden_dec[0]),
+    nn.LeakyReLU(...),
+    nn.Linear(hidden_dec[0], hidden_dec[1]),
+    nn.LeakyReLU(...),
+    nn.Linear(hidden_dec[1], output_dim),
+)
+```
+
+**After**:
+```python
+self.decoder_linear = nn.Linear(in_dec, output_dim)
+self.decoder_quadratic = nn.Linear(in_dec * in_dec, output_dim)
+
+# Decode with polynomial
+out = decoder_linear(u) + decoder_quadratic(u ⊗ u)
+```
+
+**Rationale**:
+- Polynomial functions preserve interpretability
+- Linear/quadratic relationships are biologically plausible
+- Enables theoretical identifiability guarantees
+- Avoids arbitrary non-linearities
+
+**Implementation**:
+- Config parameter: `use_polynomial_decoder=True` (default)
+- Decode method computes outer product for quadratic terms
+- No hidden layers in decoder
+
+---
+
+## 3. Simplified Encoder Architecture
+
+**Change**: Encoder reduced to single hidden layer of 128 units
+
+**Before**:
+- Encoder: [input → 512 → 256 → 2×z_dim]
+- Two hidden layers with 512, 256 units
+
+**After**:
+- Encoder: [input → 128 → 2×z_dim]
+- Single hidden layer with 128 units
+
+**Rationale**:
+- Small sample sizes require simpler models
+- Reduces overfitting risk
+- Faster training
+- Still sufficient capacity for TF-only input
+
+**Implementation**:
+- Config parameter: `hidden_enc=(128,)`
+- Can be tuned: single value for one layer, tuple for multiple layers
+
+---
+
+## 4. Fixed MMD Computation (CRITICAL BUG FIX)
+
+**Change**: MMD computed on reconstructed expression, NOT DAG-transformed latents
+
+**Before** (INCORRECT):
+```python
+# Simulate intervention
+u_sim = model(X_ctrl, c=c_interv, num_interv=1)
+
+# WRONG: Apply intervention to already-intervened cells
+u_real = model(X_real, c=c_interv, num_interv=1)
+
+loss_mmd = MMD(u_sim, u_real)  # On DAG latents
+```
+
+**After** (CORRECT):
+```python
+# Simulate intervention on controls
+mu_ctrl, var_ctrl = model.encode(X_ctrl_tf, ct=ct_vec)
+z_ctrl = model.reparameterize(mu_ctrl, var_ctrl)
+u_sim = model._dag_transform(z_ctrl, bc, csz, None, None)
+x_sim = model.decode(u_sim, ct=ct_vec)
+
+# Real cells: encode and decode WITHOUT intervention
+# (Already intervened, so just reconstruct)
+mu_real, var_real = model.encode(X_real_tf, ct=ct_vec)
+z_real = model.reparameterize(mu_real, var_real)
+x_real_rec = model.decode(z_real, ct=ct_vec)
+
+loss_mmd = MMD(x_sim, x_real_rec)  # On reconstructed expression
+```
+
+**Rationale**:
+- Real intervened cells are ALREADY the result of intervention
+- Should NOT apply intervention again via DAG transform
+- Both sides should be in same space (reconstructed expression)
+- Validates entire pipeline (encoder → DAG → decoder)
+
+**Why Reconstructed Expression (not latents)?**:
+- Both sides in same semantic space
+- More biologically interpretable
+- Validates full model pipeline
+- Avoids conceptual error
+
+---
+
+## 5. Added Centroid Loss (Optional Component)
+
+**Change**: New loss component for mean expression shift matching
+
+**Loss Function**:
+```python
+centroid_sim = x_sim.mean(dim=0)
+centroid_real = x_real_rec.mean(dim=0)
+loss_centroid = MSE(centroid_sim, centroid_real)
+```
+
+**Total Loss** (6 components):
+```
+L_total = α_rec × L_rec
+        + β(t) × L_KL
+        + λ_mcc × L_align
+        + λ_sparse × L_sparse
+        + α(t) × L_MMD
+        + λ_centroid × L_centroid
+```
+
+**Rationale**:
+- Directly enforces mean shift matching
+- Lower variance than full distribution (MMD)
+- Complements MMD for strong intervention effects
+- Optional: can disable by setting λ_centroid = 0
+
+**Default Weight**: λ_centroid = 0.1
+
+**When to Use**:
+- Enable (λ > 0): Datasets with strong mean shift effects
+- Disable (λ = 0): If MMD alone is sufficient
+
+**Implementation**:
+- Config parameter: `lambda_centroid=0.1` (default)
+- Computed during MMD loss calculation
+- Logged separately for monitoring
+
+---
+
+## 6. Updated Model Configuration
+
+**GCRLVAEConfig Changes**:
+
+```python
+# Before
+GCRLVAEConfig(
+    input_dim=n_genes,
+    output_dim=n_genes,
+    hidden_enc=(512, 256),
+    hidden_dec=(256, 512),
+)
+
+# After
+GCRLVAEConfig(
+    input_dim=n_TFs,              # TF-only
+    output_dim=n_genes,           # All genes
+    hidden_enc=(128,),            # Simplified
+    use_polynomial_decoder=True,  # Polynomial
+)
+```
+
+---
+
+## 7. Training Loop Changes
+
+**DataLoader**:
+- Returns `x_tf` (TF-only input) and `x_all` (all genes target)
+- Reconstruction: `loss_rec = MSE(decode(encode(x_tf)), x_all)`
+
+**MMD Computation**:
+- Extract TF columns from real intervened cells: `X_real_tf = X_real_all[:, tf_idx]`
+- Encode both simulated and real with TF-only input
+- Compare reconstructed expressions (all genes)
+
+**Logging**:
+- Added `loss_centroid` to logged metrics
+- All 6 loss components tracked per epoch
+
+---
+
+## Summary Table: Before vs. After
+
+| Component | Before | After |
+|-----------|--------|-------|
+| **Encoder input** | All genes | TF only |
+| **Decoder output** | All genes | All genes |
+| **Decoder type** | MLP with LeakyReLU | Polynomial (linear + quadratic) |
+| **Encoder layers** | [512, 256] | [128] |
+| **MMD space** | DAG latents (u) | Reconstructed expression |
+| **MMD on real cells** | Apply intervention (WRONG) | Just reconstruct (CORRECT) |
+| **Loss components** | 5 | 6 (added centroid) |
+| **Reconstruction target** | All genes | All genes (from TF input) |
+
+---
+
+## Backward Compatibility
+
+**Breaking Changes**:
+- Model architecture changed (input/output dimensions)
+- Cannot load old checkpoints
+- Requires TF annotation in adata.var['kind']
+
+**Config Compatibility**:
+- Old configs will fail due to missing `use_polynomial_decoder`
+- Must update to new GCRLVAEConfig format
+
+---
+
+## Migration Guide
+
+To use the new version:
+
+1. **Update model config**:
+   ```python
+   cfg_m = GCRLVAEConfig(
+       input_dim=n_TFs,  # Not n_genes
+       output_dim=n_genes,
+       hidden_enc=(128,),
+       use_polynomial_decoder=True,
+   )
+   ```
+
+2. **Update training config**:
+   ```python
+   cfg = VAEConfig(
+       lambda_centroid=0.1,  # Add centroid loss weight
+       # ... other params
+   )
+   ```
+
+3. **Ensure data annotations**:
+   - `adata.var['kind']` must contain 'TF' or 'TG'
+   - All intervened TFs must be annotated as 'TF'
+
+4. **No code changes needed**:
+   - Training script automatically extracts TF indices
+   - Model handles TF-only input internally
+
+---
+
+## Performance Expectations
+
+**Improvements**:
+- Simpler model → faster training
+- TF-only input → reduced dimensionality
+- Polynomial decoder → better interpretability
+- Fixed MMD → correct intervention learning
+
+**Trade-offs**:
+- Polynomial decoder may have slightly lower reconstruction accuracy
+- Compensated by biological interpretability
+
+---
+
+## Testing and Validation
+
+After implementing changes, verify:
+1. ✓ Model accepts TF-only input and outputs all genes
+2. ✓ Decoder is polynomial (no LeakyReLU activations)
+3. ✓ MMD computes on reconstructed expression
+4. ✓ Real intervened cells NOT passed through DAG with intervention
+5. ✓ Centroid loss logged and computed correctly
+6. ✓ Training runs without errors
+7. ✓ Loss components all decrease as expected
+
+---
+
+## Files Modified
+
+1. **src/gcrl/models/gcrl_vae.py**:
+   - Updated GCRLVAEConfig
+   - Implemented polynomial decoder
+   - Variable hidden layer encoder
+
+2. **src/gcrl/training/train_gcrl_vae.py**:
+   - Extract TF indices
+   - DataLoader returns x_tf and x_all
+   - Fixed MMD computation
+   - Added centroid loss
+   - Updated logging
+
+3. **docs/gcrl_vae_training_schema_explanation.txt**:
+   - Updated architecture description
+   - Fixed MMD algorithm
+   - Added centroid loss section
+   - Updated hyperparameters
+
+4. **docs/CHANGES_v2.txt** (this file):
+   - Complete change documentation
+
+---
+
+## Contact and Questions
+
+For questions about these changes or implementation details, refer to:
+- Main documentation: `docs/gcrl_vae_training_schema_explanation.txt`
+- Methods description: `docs/gcrl_vae_training_schema_methods.txt`
+- Model code: `src/gcrl/models/gcrl_vae.py`
+- Training code: `src/gcrl/training/train_gcrl_vae.py`
+
+---
+
+Date: 2025-01-XX
+Version: 2.0

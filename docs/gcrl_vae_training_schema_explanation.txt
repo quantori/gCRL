@@ -1,0 +1,417 @@
+# gCRL-VAE Training Schema: Complete Implementation Guide
+
+This document reflects the current state of the code as of 2026-05-01.
+Previous version saved as gcrl_vae_training_schema_explanation_backup_2026_04_30.txt.
+
+---
+
+## Overview
+
+gCRL-VAE (Gene Community Representation Learning - Variational Autoencoder) is a causal
+VAE that learns biologically interpretable latent representations aligned with gene
+regulatory network (GRN) structure. The implementation closely follows the discrepancy-VAE
+(CMVAE, Shen et al. 2021) architecture, extended with two optional GRN-informed components
+controlled by two boolean flags in both VAEConfig and GCRLVAEConfig:
+
+    use_tf_only     : encoder receives TF-only expression (True) or all genes (False)
+    use_GRN_priors  : hard community routing + MCC alignment loss (True) or
+                      soft MLP routing + no MCC (False, reproduces discrepancy-VAE)
+
+The four combinations yield:
+
+    use_tf_only=True,  use_GRN_priors=True  -> gCRL-VAE (default)
+    use_tf_only=False, use_GRN_priors=False -> discrepancy-VAE (CMVAE)
+    use_tf_only=True,  use_GRN_priors=False -> TF-input discrepancy-VAE
+    use_tf_only=False, use_GRN_priors=True  -> all-gene input with GRN priors
+
+---
+
+## Architecture
+
+```
+INPUT: x_enc  (TF-only if use_tf_only=True, all genes if False)
+   |
+[ENCODER]
+   fc1(input_dim -> hidden_enc) -> LeakyReLU(0.2)
+   fc_mean(hidden_enc -> z_dim) -> mu
+   fc_var(hidden_enc  -> z_dim) -> softplus -> var
+   |
+z ~ N(mu, var)          reparameterization trick
+   |
+[ROUTING]
+   use_GRN_priors=True  : _hard_routing via learned permutation pi (from score matrix S)
+   use_GRN_priors=False : _soft_routing via c_head MLP + softmax (CMVAE c_encode)
+   |
+   bc  : (B, z_dim)  routing vector
+   csz : (B, 1)      intervention magnitude  c @ c_shift
+   |
+[DAG TRANSFORM]
+   G_triu = triu(G, diagonal=1)
+   u = (z + bc * csz) @ inv(I - G_triu)
+   |
+[DECODER]  (fixed, same as CMVAE)
+   d1(z_dim -> 128) -> LeakyReLU(0.2) -> d2(128 -> output_dim)
+   |
+OUTPUT: x_rec / y_hat  (always all genes, shape: B x n_genes)
+```
+
+### Key dimensions:
+- input_dim  : n_TFs (use_tf_only=True) or n_genes (use_tf_only=False)
+- z_dim      : p + 1, where p = number of intervened TF communities
+- output_dim : n_genes (TF + TG, always)
+- hidden_enc : configurable (default 128, encoder only; decoder always uses 128)
+- c_dim      : number of unique intervened TFs
+
+### Learnable parameters:
+- fc1, fc_mean, fc_var  : encoder weights
+- d1, d2                : decoder weights (fixed 128 hidden, same as CMVAE)
+- G (z_dim x z_dim)     : causal adjacency matrix; only triu(G, diagonal=1) is used
+- c_shift (c_dim,)      : per-TF intervention magnitude
+- c_head (MLP)          : soft routing head (use_GRN_priors=False only)
+- S (z_dim x z_dim)     : permutation score matrix (use_GRN_priors=True only)
+                          initialized to identity; pi = argmax(S, dim=1) row-by-row
+
+---
+
+## Permutation Learning (use_GRN_priors=True)
+
+A square score matrix S ∈ ℝ^(z_dim × z_dim) is an nn.Parameter, initialized to the
+identity matrix. At each forward pass the hard permutation is derived as:
+
+    pi[k] = argmax(S[k, :])     for k = 0, ..., z_dim-1
+
+pi is a length-(z_dim) integer vector. It serves two simultaneous roles:
+
+1. Routing: TF with community index k is routed to latent dimension pi[k].
+   This replaces the old fixed tf_to_latent array — the assignment is now learned.
+
+2. Causal ordering: the DAG upper triangle triu(G, diagonal=1) enforces acyclicity
+   by assuming a fixed causal order over latent dimensions. With the learned pi,
+   latent dimension pi[0] is treated as the most upstream cause, pi[1] next, and so on.
+   The model therefore learns which community is causally upstream of which.
+
+3. MCC alignment: the eigengene matrix E is reordered by pi at loss time so that
+   eigengene column pi[k] is compared against latent dimension k:
+       partial_mcc_loss_torch(E[:, pi], mu)
+   No additional alignment matrix is needed.
+
+pi is non-differentiable (argmax), but S is updated by gradient descent because the
+MCC loss value changes as the column assignments implied by S change. Gradients flow
+through the MCC values into mu and into S. S is initialized to the identity so that
+training starts from the trivial permutation (community k -> latent k), avoiding an
+extra source of randomness.
+
+---
+
+## Data Requirements
+
+### Input AnnData structure:
+
+adata.X
+    Normalized + log1p-transformed gene expression (float32, possibly sparse).
+    Used as-is — no z-scoring is applied, matching discrepancy-VAE behaviour.
+
+adata.obs (cell metadata):
+    set          : "training" or "test"
+    intervention : perturbation label
+                   Controls  : "control", "unperturbed", "na", "NA", "None", "none", ""
+                   Single    : "GATA1"
+                   Combinatorial: "GATA1+TAL1" (split on +, ;, or ,)
+    cell_type    : cell type label (also "celltype" accepted)
+
+adata.var (gene metadata):
+    kind      : "TF" or "TG"  (required when use_tf_only=True or use_GRN_priors=True)
+    community : TF community assignment (required when use_GRN_priors=True)
+
+adata.obsm (required when use_GRN_priors=True):
+    X_comm_eig  : precomputed eigengene matrix, shape (n_cells, >= p+1)
+                  Must be computed BEFORE calling train_gcrl_vae() via
+                  compute_eigengenes() or equivalent.
+                  Column order does not need to match latent dimension order;
+                  pi learns the mapping at training time.
+
+---
+
+## Training Data Flow
+
+```
+adata (full dataset)
+    |
+    ├── training set (adata.obs["set"] == "training")
+    |       |
+    |       ├── controls  -> encoder input, reconstruction target, eigengene source
+    |       └── perturbed -> ground truth for MMD loss
+    |
+    └── test set -> untouched during training; used only in predict()
+```
+
+### Batch composition (InterventionBatchSampler):
+Each batch contains cells from a single intervention condition, matching
+discrepancy-VAE's SCDATA_sampler strategy. A paired control cell is sampled
+for each intervened cell at dataset construction time (_PairedDataset), giving
+tuples (x_ctrl_enc, y_interv, c_binary, x_ctrl_all, eig) per item, analogous
+to SCDataset.
+
+When use_GRN_priors=True, the eigengene row for the same sampled control cell
+is also stored in the dataset and returned as part of the batch (eig), ensuring
+that E[i] and mu[i] always correspond to the same cell.
+
+---
+
+## Loss Function
+
+### Formula:
+
+    L = alpha(t) * MMD(y_hat, y_interv)               # intervention distribution matching
+      + MSE(x_recon, x_ctrl_all)                      # control reconstruction
+      + beta(t) * KLD(mu, var)                         # latent regularisation
+      + lambda_sparse * L1(triu(G, diagonal=1))        # causal graph sparsity
+      [+ lambda_mcc * (1 + partial_mcc(E[:, pi], mu))] # GRN alignment (use_GRN_priors=True only)
+
+### Components:
+
+1. MMD loss (alpha(t) * MMD):
+   Multi-scale Gaussian kernel MMD between simulated perturbed expression y_hat
+   and real perturbed expression y_interv. Kernel parameters: kernel_num=5,
+   kernel_mul=2.0, adaptive bandwidth by default.
+   alpha(t): 0 for epochs <5, linear ramp to alpha_mmd_max at mid-training,
+   plateau at alpha_mmd_max thereafter.
+
+2. Reconstruction loss (MSE):
+   Mean squared error between decoded control expression x_recon and original
+   control expression x_ctrl_all. Constant weight 1.0 (not configurable).
+   Perturbed cells do NOT contribute to this term.
+
+3. KL divergence loss (beta(t) * KLD):
+   Standard Gaussian KLD. Encoder returns variance sigma^2 (not log-variance);
+   logvar = log(var) is computed inside the loss.
+   beta(t): 0 for epochs <10, linear ramp to beta_kld_max thereafter.
+
+4. L1 sparsity (lambda_sparse * L1):
+   L1 norm of triu(G, diagonal=1). Encourages sparse causal graph.
+   Active from epoch 0 (no delayed onset).
+
+5. MCC alignment (lambda_mcc * (1 + partial_mcc)) [use_GRN_priors=True only]:
+   1.0 + partial_mcc_loss_torch(E[:, pi], mu)
+   E    : (B, p+1) eigengene matrix for the sampled control cells in this batch
+   pi   : (z_dim,) hard permutation derived from S = argmax(S, dim=1)
+   mu   : (B, z_dim) latent means from encoding those same control cells
+   E[:, pi] reorders eigengene columns so column pi[k] aligns with latent dim k.
+   partial_mcc_loss_torch returns the negative mean partial correlation in [−1, 0].
+   Adding 1 shifts the range to [0, 1]: 0 = perfect alignment, 1 = no alignment.
+   This makes the MCC term non-negative and comparable in scale to MSE and MMD.
+   Active every epoch; weight lambda_mcc is constant.
+
+### What is NOT in the loss (removed from previous version):
+- Centroid loss
+- NOTEARS DAG acyclicity penalty
+- Per-epoch sparsity/DAG onset epochs
+- Reconstruction weight alpha_rec (now always 1.0)
+- X_align linear map (replaced by permutation pi)
+
+---
+
+## Schedules (same as discrepancy-VAE)
+
+    beta_schedule[epoch]:
+        epochs 0-9  : 0
+        epochs 10+  : linear ramp 0 -> beta_kld_max
+
+    alpha_schedule[epoch]:
+        epochs 0-4  : 0
+        epochs 5 to epochs//2 : linear ramp 0 -> alpha_mmd_max
+        epochs//2 + : plateau at alpha_mmd_max
+
+    temp_schedule[epoch]:
+        epochs 0-4  : 1.0
+        epochs 5+   : linear ramp 1.0 -> temp_max
+        (used only for soft routing, i.e. use_GRN_priors=False)
+
+---
+
+## Model Config (GCRLVAEConfig)
+
+    input_dim        : int   encoder input size (n_TFs or n_genes)
+    z_dim            : int   latent dimension (= p+1)
+    c_dim            : int   number of unique intervened TFs
+    output_dim       : int   decoder output size (always n_genes)
+    hidden_enc       : int   encoder hidden layer size (default 128)
+    intervention_mapping : "hard" (use_GRN_priors=True) or "soft" (False)
+    use_tf_only      : bool  informational; used by trainer
+    use_GRN_priors   : bool  controls routing and MCC loss
+
+## Training Config (VAEConfig)
+
+    outdir           : str
+    batch_size       : int   (default 32, same as discrepancy-VAE)
+    epochs           : int   (default 100)
+    lr               : float (default 1e-3, same as discrepancy-VAE)
+    lambda_sparse    : float L1 weight on triu(G) (default 1e-3)
+    lambda_mcc       : float MCC alignment weight (default 1.0)
+    beta_kld_max     : float max KLD weight (default 2.0, same as discrepancy-VAE mxBeta)
+    alpha_mmd_max    : float max MMD weight (default 10.0, same as discrepancy-VAE mxAlpha)
+    temp_max         : float max softmax temperature (default 5.0, same as discrepancy-VAE mxTemp)
+    mmd_kernel_mul   : float (default 2.0)
+    mmd_kernel_num   : int   (default 5)
+    mmd_fix_sigma    : float or None (default None = adaptive)
+    use_tf_only      : bool  passed to GCRLVAEConfig (default True)
+    use_GRN_priors   : bool  passed to GCRLVAEConfig (default True)
+    z_dim            : int or None  latent dimension override (use_GRN_priors=False only)
+                       None -> z_dim = c_dim (CMVAE default, one latent per intervened TF)
+                       int  -> compressed latent; must satisfy 2 <= z_dim <= c_dim
+                       Ignored when use_GRN_priors=True (z_dim always = p+1 from communities)
+    num_workers      : int   (default 0)
+    seed             : int   (default 0)
+
+---
+
+## Model Checkpointing (same as discrepancy-VAE)
+
+- Best model saved by training loss: MMD + MSE + KLD + L1 (excludes MCC)
+- Saved to: {outdir}/best_model.pt   (full model via torch.save)
+- Last model: {outdir}/last_model.pt
+- train_gcrl_vae() returns the best model (not last).
+- No validation set; no early stopping.
+
+---
+
+## Output Artifacts
+
+    {outdir}/best_model.pt          full model, best training loss
+    {outdir}/last_model.pt          full model, last epoch
+    {outdir}/training_history.json  per-epoch: loss, mmd, mse, kld, l1, mcc, beta, alpha
+    {outdir}/eval_wiring.json       tf_names, tf_comm_ids, z_dim, c_dim,
+                                    routing, use_tf_only, use_GRN_priors, perm
+
+---
+
+## Prediction (GCRLVAE.predict)
+
+Returns an AnnData object with:
+
+    X           : (n_predictions, n_genes) predicted expression
+    obs columns :
+        set              : "prediction"
+        cell_type        : cell type of the prediction group
+        intervention     : intervention label (e.g. "CEBPE" or "CEBPE+KLF1")
+        test_cell_idx    : original obs index of the real test cell being predicted
+        control_cell_idx : obs index of the control cell used as simulation seed
+
+The evaluation function matches predictions to ground truth via test_cell_idx.
+
+Signature (unchanged):
+    model.predict(adata, *, set_key, intervention_key, cell_type_key,
+                  control_labels, seed) -> AnnData
+
+---
+
+## Differences from Previous Version (backup_2026_04_30)
+
+| Feature                    | Previous                        | Current                          |
+|----------------------------|---------------------------------|----------------------------------|
+| Decoder                    | Polynomial (linear + quadratic) | 2-layer MLP (same as CMVAE)      |
+| Preprocessing              | Per-CT z-score                  | None (raw adata.X, as CMVAE)     |
+| Batch sampler              | By cell type                    | By intervention (as CMVAE)       |
+| MCC alignment              | partial_mcc(E, MU[:, :p+1])     | partial_mcc(E[:, pi], mu)        |
+| Alignment parameter        | X_align (z_dim x p+1)           | S (z_dim x z_dim), identity init |
+| Routing assignment         | Fixed tf_to_latent array        | Learned via pi = argmax(S)       |
+| Causal ordering            | Arbitrary (fixed at init)       | Learned jointly with routing     |
+| Centroid loss              | Yes                             | Removed                          |
+| NOTEARS DAG penalty        | Yes                             | Removed                          |
+| Sparsity onset             | Epoch 10+                       | Active from epoch 0              |
+| Cell-type conditioning     | Yes (ct one-hot in enc/dec)     | Not yet (set_ct_index is no-op)  |
+| use_tf_only flag           | Hardcoded True                  | Configurable via VAEConfig       |
+| use_GRN_priors flag        | Not present                     | Configurable via VAEConfig       |
+| Eigengene source           | obsm or on-the-fly              | obsm only (must precompute)      |
+| predict() obs columns      | set, cell_type, intervention,   | + test_cell_idx, control_cell_idx|
+|                            | source_cell_idx                 |                                  |
+
+---
+
+## Typical Usage Sequence
+
+Below is the minimal sequence of steps to train gCRL-VAE and generate predictions.
+Steps 1–2 are done once per dataset; steps 3–6 are the training and inference workflow.
+
+### Step 1 — Prepare the train/test split
+
+The model trains on controls + single perturbations and is evaluated on double
+perturbations. If the h5ad file places some doubles in the training split, move them
+to test before doing anything else:
+
+    _ctrl_labels = {"control", "unperturbed", "na", "NA", "None", "none", ""}
+    _is_double   = adata.obs["intervention"].str.contains(r"[+;,]", regex=True)
+    _is_train    = adata.obs["set"] == "training"
+    adata.obs.loc[_is_train & _is_double, "set"] = "test"
+
+### Step 2 — Compute eigengenes (use_GRN_priors=True only)
+
+Must be called BEFORE train_gcrl_vae(). Mutates adata in-place.
+
+    from gcrl.grn.eigengenes import compute_eigengenes
+    compute_eigengenes(
+        adata,
+        community_col="community",
+        reference_query='intervention == "unperturbed"',
+        mode="all_cells",
+        method="PC",
+        seed=42,
+    )
+    # result stored in adata.obsm["X_comm_eig"]
+
+### Step 3 — Configure and train
+
+    from gcrl.training.train_gcrl_vae import VAEConfig, train_gcrl_vae
+
+    cfg = VAEConfig(
+        outdir         = "results/my_run",
+        epochs         = 100,
+        batch_size     = 32,
+        use_tf_only    = True,
+        use_GRN_priors = True,
+    )
+    model, history = train_gcrl_vae(adata, cfg, eigengenes_key="X_comm_eig")
+
+### Step 4 — Reload saved model (skip re-training)
+
+    import torch
+    model = torch.load("results/my_run/best_model.pt", map_location="cpu")
+    model.eval()
+
+### Step 5 — Generate predictions
+
+    preds = model.predict(
+        adata,
+        set_key          = "set",
+        intervention_key = "intervention",
+        cell_type_key    = "cell_type",
+        control_labels   = tuple(_ctrl_labels),
+        seed             = 42,
+    )
+    # preds is an AnnData with obs["set"] == "prediction"
+    # obs columns: set, cell_type, intervention, test_cell_idx, control_cell_idx
+
+### Step 6 — Evaluate
+
+    from gcrl.evaluation.prediction_eval import evaluate_predictions
+
+    metrics = evaluate_predictions(
+        adata      = adata,
+        preds      = preds,
+        output_dir = "results/my_run",
+        control_labels = tuple(_ctrl_labels),
+    )
+    # returns a long-format DataFrame with columns:
+    # cell_type, intervention, method, metric_name, metric_value, n_test_cells, n_pred_cells
+    # method: "actual" (model), "worst_case" (control centroid), "perfect_baseline" (random split)
+
+---
+
+## Implementation Files
+
+    src/gcrl/models/gcrl_vae.py          GCRLVAE model, GCRLVAEConfig
+    src/gcrl/training/train_gcrl_vae.py  train_gcrl_vae(), VAEConfig, MMD_loss,
+                                         loss_function, InterventionBatchSampler,
+                                         _PairedDataset
+    src/gcrl/alignment/partial_mcc.py   partial_mcc_loss_torch, optimize_partial_mcc
+    ext_tools/discrepancy_vae-master/    original CMVAE reference implementation

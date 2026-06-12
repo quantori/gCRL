@@ -1,0 +1,175 @@
+Visualization Output Structure
+================================
+
+visualize_predictions(adata, preds, output_dir="results/viz")
+
+Creates:
+  results/viz/
+  ├── per_intervention/          # Individual plots for each intervention
+  │   ├── celltype1_KLF1.png
+  │   ├── celltype1_GATA1.png
+  │   ├── celltype1_GATA1+CEBPA.png  # Double perturbations
+  │   ├── celltype2_KLF1.png
+  │   └── ...
+  │
+  └── per_celltype/              # Aggregate plots per cell type
+      ├── celltype1_all_interventions.png
+      ├── celltype1_centroid_distances.csv
+      ├── celltype2_all_interventions.png
+      └── celltype2_centroid_distances.csv
+
+
+Per-Intervention Plot (e.g., celltype1_KLF1.png):
+===================================================
+
+  Title: celltype1 | KLF1
+         Centroid distance: 0.523
+
+  UMAP embedding showing:
+
+    • Light gray dots (faint): Unperturbed training cells (background)
+    • Blue circles: Actual test cells with KLF1 intervention
+    • Purple circles: Predicted cells with KLF1 intervention
+    • Blue X (large): Centroid of actual cells
+    • Purple X (large): Centroid of predicted cells
+    • Black dashed line: Connects the two centroids
+    • Blue ellipse: 2-std covariance of actual distribution
+    • Purple ellipse: 2-std covariance of predicted distribution
+
+  Legend:
+    □ Unperturbed (training)
+    ○ Actual (N cells)
+    ○ Predicted (N cells)
+    ✗ Actual centroid
+    ✗ Predicted centroid
+
+
+Per-Cell-Type Plot (e.g., celltype1_all_interventions.png):
+============================================================
+
+  Title: Cell Type: celltype1
+         20 interventions
+
+  UMAP embedding showing:
+
+    • Light gray dots (faint): Unperturbed training cells (background)
+    • Colored circles: Actual test cells (different color per intervention)
+    • Colored squares: Predicted cells (matching colors)
+    • Large colored circles: Centroids of actual distributions
+    • Large colored squares: Centroids of predicted distributions
+    • Colored dashed lines: Connect corresponding centroids
+
+  Legend:
+    □ Unperturbed (background)
+    ○ = Actual centroid
+    □ = Predicted centroid
+
+
+Centroid Distances CSV (e.g., celltype1_centroid_distances.csv):
+================================================================
+
+  intervention,centroid_distance
+  KLF1,0.523
+  FOXA1,0.687
+  GATA1,0.712
+  HOXB9,0.891
+  CEBPB,1.023
+  GATA1+CEBPA,1.456
+  ...
+
+  (Sorted by distance, best predictions first)
+
+
+Example Interpretation:
+=======================
+
+GOOD PREDICTION (distance = 0.523):
+  - Centroids are very close
+  - Blue and purple points overlap significantly
+  - Ellipses have similar shape and size
+  - Both distributions in same region of UMAP space
+  → Model accurately predicts intervention effect
+
+POOR PREDICTION (distance = 2.845):
+  - Centroids are far apart
+  - Blue and purple points in different regions
+  - Different ellipse shapes (one tight, one diffuse)
+  - Predictions in wrong part of UMAP space
+  → Model struggles with this intervention
+
+
+Color Scheme:
+=============
+
+Per-Intervention:
+  Background: #D3D3D3 (light gray), alpha=0.15
+  Actual: #2E86AB (blue), alpha=0.6
+  Predicted: #A23B72 (purple), alpha=0.6
+
+Per-Cell-Type:
+  Background: #D3D3D3 (light gray), alpha=0.15
+  Interventions: tab20 colormap (20 distinct colors)
+    - Circles (○) = Actual
+    - Squares (□) = Predicted
+
+
+Console Output:
+===============
+
+When running visualize_predictions():
+
+======================================================================
+gCRL-VAE Prediction Visualization
+======================================================================
+
+📊 Data Summary:
+  Training controls: 8,907 cells
+  Test data: 3,374 cells
+  Predictions: 3,374 cells
+  Cell types: ['all']
+  Test interventions: 20
+
+🔧 Fitting UMAP on training controls...
+   PCA: 2701 genes → 30 PCs (explained variance: 89.23%)
+
+🔄 Transforming data to UMAP space...
+
+📈 Creating per-intervention plots...
+   Generating 20 plots...
+   Progress: 10/20 plots generated
+   Progress: 20/20 plots generated
+   ✓ 20 plots saved to per_intervention/
+
+📈 Creating per-cell-type plots...
+   Generating 1 plots...
+   ✓ 1 plots saved to per_celltype/
+
+✅ Visualization complete!
+   Plots saved to: /path/to/results/predictions_viz
+======================================================================
+
+
+Notebook Integration:
+=====================
+
+After running the visualization cell in the notebook:
+
+1. View individual plots:
+   - Navigate to results/predictions_viz/per_intervention/
+   - Open any PNG file to see specific intervention
+   - Compare predicted vs. actual for that intervention
+
+2. View aggregate plots:
+   - Navigate to results/predictions_viz/per_celltype/
+   - Open PNG file to see all interventions at once
+   - Get overview of model performance
+
+3. Check quantitative metrics:
+   - Run the "Inspect centroid distances" cell
+   - See ranking of best/worst predictions
+   - Summary statistics (mean, median, std, min, max)
+
+4. Interpret results:
+   - Small distances → good predictions
+   - Large distances → poor predictions
+   - Look for patterns (e.g., double perturbations harder)

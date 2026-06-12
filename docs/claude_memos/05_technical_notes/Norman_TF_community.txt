@@ -1,0 +1,161 @@
+Norman 2019 — TF Community Detection: Primer for Resuming Work
+==============================================================
+Last updated: 2026-04-02
+Notebook: gCRL/notebooks/00_data_preprocessing/Norman_preprocessing/2_TF_Graphs_10_components_no_g_cot.ipynb
+Package:  gCRL/src/gcrl/grn/
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. BIOLOGICAL CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Data:       Norman 2019 Perturb-seq, K562 cell line (erythroid-like cancer).
+Goal:       Identify communities of transcription factors (TFs) that
+            co-regulate similar target genes, using a gene regulatory
+            network (GRN) inferred from the perturbation data.
+Caveat:     K562 is myeloid/erythroid lineage → GO enrichment always
+            returns myeloid differentiation terms at the top unless
+            explicitly filtered out (see Section 5).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. PIPELINE OVERVIEW (notebook cell order)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Cell 1  – Imports (all at top; includes sklearn, scipy.stats)
+Cell 2  – Control parameters + HVG loading (Norman2019_processed.h5ad)
+Cell 4  – Load raw GRN (raw_GRN.csv), FDR-filter edges (BH, adjp ≤ 0.05)
+          → filtered_grn (sorted by coef_abs descending)
+Cell 5  – Edge-weight threshold diagnostics (3-panel plot + Δ<5% table)
+Cell 6  – GMM threshold: 2-Gaussian fit on log10(coef_abs)
+          Two thresholds computed:
+            • GMM crossing: where signal PDF overtakes noise PDF
+            • Left-tail cutoff: noise_mean − n_sigma_tail × noise_std
+Cell 7  – Apply top_percentage threshold → current_grn
+Cell 8  – Coverage diagnostics (edges / TF sources / target genes before vs after)
+Cell 10 – Load TF reference parquet, filter tf_names to those in current_grn
+Cell 12 – Build g_reg (regulatory layer); exploratory single-seed clustering
+Cell 13 – Sweep gamma_reg ∈ {1.2, 1.25, 1.3} × 100 seeds (single-layer Leiden on g_reg)
+Cell 14 – Filter trivial partitions; compute stability (VI, ARI)
+Cell 15 – Save filtered_results.pkl, stability.pkl
+Cell 16 – Pick best gamma_reg (lowest VI_mean); consensus clustering via
+          co-association matrix (min_coassoc=0.5, resolution=1.5)
+Cell 17 – Merge small clusters (< min_size=5 TFs) into smallest-label cluster
+Cell 18 – Save consensus_labels.pkl
+Cell 20 – Network visualization: overview, community layout, no labels
+Cell 21 – Network visualization: labeled (top 20 TFs by weighted degree)
+Cell 23 – Build cluster gene sets (TFs + targets); load GO BP 2025; compute GO levels
+Cell 24 – Filter GO BP terms by size (20–200) and level (≥5)
+Cell 25 – Run ORA (universe_mode='custom', custom_universe=hvg_names)
+Cell 26 – Flag background terms (significant in >50% of clusters); build filtered_ora_results
+Cell 27 – Print top 10 terms per cluster (text summary)
+Cell 29 – Dotplots: one per cluster, significant cluster-specific terms only
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. KEY DESIGN CHOICES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Clustering layer:
+  • ONLY g_reg (regulatory layer). g_cot (co-target layer) is built but
+    NOT used for community detection in this notebook ("no_g_cot").
+
+Edge thresholding:
+  • top_percentage=0.5 in control params (adjust based on GMM diagnostics).
+  • The cumulative-weight Δ<5% criterion and GMM crossing both help choose
+    a principled threshold. The left-tail GMM cutoff is a softer alternative.
+
+Network layout:
+  • layout="community": supervised spring layout.
+    TF communities placed on a circle; within-community spring layout.
+    Parameters: k=0.7, seed=42.
+  • hide_isolates=True (singleton TFs excluded from plots).
+  • Labels drawn with white bounding boxes via ax.annotate for readability.
+
+FDR correction:
+  • Per-cluster BH correction (NOT across all clusters pooled).
+    This is the default in run_ora_for_clusters and must not be changed.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. ORA UNIVERSE — CRITICAL DETAIL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+run_ora_for_clusters() supports three universe_mode values:
+
+  'grn'    — genes in current_grn ∩ GO library.
+             Problem: after intersection with GO library, only ~300–500
+             genes remain (many GRN targets lack GO annotation).
+             Cluster gene-sets cover 50–80% of this universe →
+             hypergeometric test is underpowered → BH kills all results.
+
+  'go'     — all genes in the GO library (~11,000).
+             Problem: inflates enrichment of K562 housekeeping terms
+             (myeloid differentiation, erythroid development) because
+             cluster genes are a very small fraction of a huge universe.
+
+  'custom' — recommended. Pass hvg_names (5,000 HVGs from AnnData).
+             Balanced: larger than 'grn', smaller than 'go',
+             tied to genes actually measured in this experiment.
+             hvg_names is loaded in the control parameters cell.
+
+Current setting: universe_mode='custom', custom_universe=hvg_names
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. BACKGROUND TERM FILTERING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+filter_cluster_specific_terms(ora_results, fdr_threshold=0.05,
+                               max_cluster_fraction=0.5)
+
+Flags GO terms significant (FDR<0.05) in >50% of clusters as
+background_term=True. These are K562 cell-line artefacts, not
+cluster-specific biology. Filtered_ora_results excludes them.
+
+Typical flagged terms in this dataset:
+  • Myeloid Cell Development (GO:0061515)
+  • Myeloid Leukocyte Differentiation (GO:0002573)
+  • Related erythroid/haematopoietic terms
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. PACKAGE FUNCTIONS ADDED/MODIFIED IN THIS WORK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+gCRL/src/gcrl/grn/visualization.py  (new file)
+  plot_tf_tf_communities()     — TF-TF network with community-aware layout
+  _community_layout()          — internal: circle-of-blobs spring layout
+  plot_enrichment_dotplot()    — clusterProfiler-style dotplot
+                                 x-axis = GeneRatio, y ordered by GeneRatio
+  prettify_go_term()           — strips GO IDs from gseapy term strings
+
+gCRL/src/gcrl/grn/enrichment.py  (modified)
+  run_ora_for_clusters()       — replaced use_grn_universe bool with
+                                 universe_mode: {'grn','go','custom'}
+                                 FDR correction is per-cluster (BH)
+  filter_cluster_specific_terms() — new; flags cross-cluster background terms
+
+gCRL/src/gcrl/grn/__init__.py  (updated exports)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. DATA FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Input:
+  data/real/Norman2019/GRN/raw_GRN.csv                  — raw CellOracle GRN
+  data/real/Norman2019/GRN/hg38_TFinfo_...parquet       — TF reference
+  data/real/Norman2019/Norman2019_processed.h5ad         — 5,000 HVGs (var_names)
+
+Output (results/real/Norman2019/GRN2/):
+  filtered_results.pkl      — sweep partitions after trivial-partition filter
+  stability.pkl             — VI / ARI stability summaries per gamma_reg
+  consensus_labels.pkl      — final cluster labels (one per TF)
+  tf_cluster_GO_BP_ORA_results.csv / .pkl  — full ORA results table
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. OPEN QUESTIONS / NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Verify ORA dotplots produce results after universe_mode='custom' fix
+  (needs kernel restart + full re-run from Cell 25 onwards).
+• Consider whether to build cluster gene sets from filtered_grn
+  (pre-thresholding) rather than current_grn, to recover more target genes
+  for ORA without changing the network used for clustering.
+• The left-tail GMM cutoff (n_sigma_tail parameter in Cell 6) has not been
+  systematically evaluated — worth comparing with the crossing-point threshold.
+• Interpretation of the 10-cluster solution is in progress (Cell 30, markdown).

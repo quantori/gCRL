@@ -1,0 +1,30 @@
+name: gcrl
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core scientific stack
+  - python=3.10
+  - anndata>=0.10
+  - scanpy>=1.9
+  - numpy
+  - pandas
+  - scikit-learn
+  - pytorch
+  - matplotlib
+  - tqdm
+
+  # Development / testing tools
+  - jupyterlab
+  - notebook
+  - pytest
+  - black
+  - flake8
+  - isort
+  - pre-commit
+  - pytest
+  - pytest-cov
+
+  # Ensure pip is present
+  - pip
+

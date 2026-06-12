@@ -1,0 +1,218 @@
+gCRL-AE Training Logic (train_gcrl_ae) — Detailed Explanation
+================================================================
+
+Overview
+--------
+`train_gcrl_ae` trains a gCRL autoencoder (GCRLAE) on an AnnData object. The encoder is an MLP,
+and the decoder is a quadratic (polynomial) readout of the latent factors.
+The function supports training on a specific cell type (row subsetting),
+reference-based scaling using only unperturbed cells, and optional persistence of all artifacts.
+
+Architecture Summary (gcrl.models.gcrl_ae.GCRLAE)
+-------------------------------------------------
+- Encoder (MLP):
+  * Input: either TF-only features or all genes, depending on `input_mode`
+  * Hidden layers: sizes in `hidden_dims`, each followed by the chosen `activation`
+  * Output: latent vector z of dimension `latent_dim`
+
+- Decoder (PolyDecoder):
+  * Constructs polynomial feature vector Φ(z) = [1, z_1..z_D, z_1^2, z_1 z_2, ..., z_D^2] with i ≤ j
+    where D = latent_dim.
+  * A single linear layer maps Φ(z) to gene-level outputs.
+  * Number of polynomial features: poly_feats = 1 + D + D*(D+1)/2
+
+- Forward:
+  * Returns (x_reconstructed, z).
+
+
+Function Inputs (core ones)
+---------------------------
+- AnnData and columns:
+  * `adata`: normalized, log1p-transformed expression matrix in `adata.X`.
+  * `community_col` (default "community"): if `latent_dim` is None, infer size = (#categories of this col) + 1
+  * `kind_col` (default "kind"): must contain "TF" or "TG" labels for each gene in `adata.var`
+  * `intervention_col` (default "intervention"): used in the default reference query
+  * `cell_type_col` (default "cell_type") and `cell_type`: optional row subsetting
+
+- Model I/O selection:
+  * `input_mode`: "TF" or "ALL"
+     - "TF": encoder sees only TF genes (as defined by `adata.var[kind_col]`)
+     - "ALL": encoder sees all genes
+  * `reconstruct_all`:
+     - True: decoder outputs all genes (full matrix)
+     - False: decoder outputs only the encoder inputs
+
+- Latent and encoder details:
+  * `latent_dim`: latent size. If None, inferred from `community_col` as (#categories + 1)
+  * `hidden_dims`, `activation`: define the encoder MLP
+
+- Training:
+  * `batch_size`, `num_epochs`, `lr`, `lr_step`, `lr_gamma`, `weight_decay`, `seed`, `device`
+
+- Preprocessing:
+  * `reference_query`: default 'intervention == "unperturbed"'
+  * `standardize`: {"zscore_ref", "zscore", "minmax_0_1", "none"}
+
+- Persistence:
+  * `outdir`: if set, saves model checkpoint, embeddings, decoder weights, scalers, history, config, etc.
+
+
+Cell-Type Argument: What Exactly Happens
+----------------------------------------
+- If `cell_type` is provided, the function **filters rows** to those where
+  `adata.obs[cell_type_col] == cell_type`. All subsequent steps operate only on this subset:
+  scaling statistics, TF indexing, training, and artifact saving.
+- The code does **not** add cell-type information to the model inputs, conditioning vectors, or layers.
+  Thus, this is **not** a conditional autoencoder. It is a single AE trained on one cell-type subset.
+- The `reference_query` (default unperturbed) is evaluated within the subset. If it yields no rows,
+  the function falls back to **all rows of the subset** to compute z-score parameters.
+- Implications:
+  * Learned parameters (encoder weights, polynomial decoder) reflect the selected cell type’s data.
+  * The returned embeddings and saved means/stds are specific to this subset.
+  * Applying the model/scaler to a different cell type later may be out-of-distribution.
+
+Data Checks and Preparation
+---------------------------
+1) **Subset by cell type (optional)**
+   - If `cell_type` provided, compute mask on `adata.obs[cell_type_col]` and create `adata_sub`.
+   - If no rows match → raise ValueError.
+
+2) **Sanity checks on gene annotations**
+   - Require `kind_col` to exist in `adata_sub.var` and to contain only {"TF","TG"} (after cleaning casing/whitespace).
+   - These labels determine TF indices when `input_mode="TF"`.
+
+3) **Latent dimension**
+   - If `latent_dim is None`, require `community_col` in `adata_sub.var`,
+     and set latent_dim = (#unique categories) + 1.
+
+4) **Reference indices for scaling**
+   - `_ref_indices_from_query(adata_sub.obs, reference_query)` returns row indices
+     for z-score statistics. If empty, default to all rows.
+
+5) **Standardization over ALL genes**
+   - `"zscore_ref"`: compute mean/std on reference rows only; zero stds replaced with 1.
+   - `"minmax_0_1"`: scale each gene to [0,1] over the used rows; zero spans replaced with 1.
+   - `"none"`: pass-through (cast to float32).
+
+6) **Inputs to encoder vs targets for reconstruction**
+   - If `input_mode == "TF"`:
+     * Encoder input X_in = standardized TF columns only.
+     * `input_dim = #TF`.
+   - If `input_mode == "ALL"`:
+     * Encoder input X_in = standardized full matrix.
+     * `input_dim = n_genes`.
+   - Targets (yb) are always `X_proc` (the standardized full matrix).
+     The **loss** compares predictions to `yb[:, :output_dim]`, where:
+     * `output_dim = n_genes` if `reconstruct_all=True`
+     * `output_dim = input_dim` if `reconstruct_all=False`
+
+Model, Optimizer, and Scheduler
+-------------------------------
+- Instantiate `GCRLAE(input_dim, latent_dim, hidden_dims, activation, output_dim)`.
+- Optimizer: Adam(lr, weight_decay).
+- LR schedule: StepLR with `step_size=lr_step`, `gamma=lr_gamma`.
+- Device: auto-select `"cuda"` if available, else `"cpu"`.
+- DataLoader: batches over `(X_in, X_proc)` with shuffling per epoch.
+
+Training Loop
+-------------
+For each epoch:
+  - For each batch:
+    * Forward: `yhat, _ = model(xb)`
+    * Compute MSE: `loss = MSE(yhat, yb[:, :output_dim])`
+      (yb is the standardized full matrix; slice to `output_dim`)
+    * Backprop + optimizer step
+  - Scheduler step
+  - Record mean epoch loss in `history["loss"]`
+
+Latent Extraction and Decoder Weights
+-------------------------------------
+- After training, switch to eval mode and encode all training rows in chunks:
+  * `Z = encoder(X_in)` for all rows of the used subset.
+- Extract polynomial decoder weights:
+  * `W = model.decoder.fc.weight` (shape `(output_dim, poly_feats)`)
+  * `poly_feats = 1 + latent_dim + latent_dim*(latent_dim+1)/2`
+
+Returned Object (TrainResult)
+-----------------------------
+- `model`: the trained `GCRLAE` (with encoder and polynomial decoder).
+- `embeddings`: numpy array of shape `(n_cells_subset, latent_dim)` containing z for all used rows.
+- `decoder_weights`: numpy array `(output_dim, poly_feats)` corresponding to the linear readout on Φ(z).
+- `history`: dict with per-epoch average training loss under key `"loss"`.
+- `scalers`: dict describing scaling strategy and parameters used:
+  * zscore_ref → {"strategy", "mean", "std", "reference_query"}
+  * zscore     → {"strategy", "mean", "std"}
+  * minmax_0_1 → {"strategy", "min", "max"}
+  * none → {"strategy":"none"}
+- `config`: snapshot of hyperparameters, dimensions, device, timestamp, and an observations preview.
+
+On-Disk Persistence (if outdir is provided)
+-------------------------------------------
+Writes the following files:
+- `gcrl_ae_model.pth`: torch checkpoint with `state_dict` and shape metadata.
+- `embeddings.npy` and `embeddings.csv`: latent matrix Z with obs_names as index in CSV.
+- `decoder_weights.npy` and `decoder_weights.csv`: weights W; rows indexed by gene names (up to `output_dim`).
+- `history.json`: training loss curve.
+- `config.json`: hyperparameters/config for reproducibility.
+- Scalers:
+  * z-score → `zscore_mean.npy`, `zscore_std.npy`
+  * minmax → `min.npy`, `max.npy`
+- `tf_indices.npy`: saved if `input_mode == "TF"`.
+- `obs_names_used.csv`: names of the observations actually used for training (subset aware).
+
+Typical Usage Patterns
+----------------------
+1) TF → All-gene reconstruction (GRN-aligned setup):
+   * `input_mode="TF", reconstruct_all=True`
+   * Learns a latent on TFs that reconstructs all genes (TFs explain TGs).
+
+2) Standard autoencoder with quadratic decoder:
+   * `input_mode="ALL", reconstruct_all=True`
+
+3) Input-only reconstruction:
+   * `reconstruct_all=False` for ablations or faster training.
+
+4) Cell-type–specific training:
+   * Provide `cell_type=...` to learn type-specialized latents/decoder; scaling is computed within the subset.
+
+Key Edge Cases and Guardrails
+-----------------------------
+- If no cells match the requested `cell_type`, raise ValueError.
+- If `kind_col` missing or contains values outside {"TF","TG"}, raise ValueError.
+- If `latent_dim=None` but `community_col` missing, raise ValueError.
+- If `reference_query` matches no rows, use all rows of the subset as reference (silent fallback).
+- Zero-variance features during z-scoring are set to std=1 to avoid NaNs.
+
+Conditional vs. Per-Type Models (Important Clarification)
+---------------------------------------------------------
+- The `cell_type` argument **does not** turn the model into a conditional auto-encoder.
+  It only restricts **which rows are used for training and for computing scalers**.
+- To obtain a *conditional* AE, you would need to feed a cell-type code/embedding to the network
+  (e.g., concatenate to Φ(z), use FiLM on the decoder, or employ a mixture-of-experts decoder).
+
+Minimal Example
+---------------
+```
+res = train_gcrl_ae(
+    adata,
+    input_mode="TF",
+    reconstruct_all=True,
+    latent_dim=None,                 # infer from adata.var["community"] + 1
+    cell_type_col="cell_type",
+    cell_type="B cell",              # train only on B cells
+    reference_query='intervention == "unperturbed"',
+    standardize="zscore_ref",
+    hidden_dims=(256,),
+    num_epochs=100,
+    lr=1e-3,
+    outdir="runs/bcells"
+)
+Z = res.embeddings             # (n_Bcells, latent_dim)
+W = res.decoder_weights        # (n_genes, poly_feats)
+```
+
+Versioning Notes
+----------------
+- Reproducibility is partially ensured via NumPy and PyTorch seeds.
+- Device auto-selection means CPU/GPU differences may still occur via kernel-level nondeterminism unless additional flags are set.
+- Saved `config.json` captures the critical knobs for downstream reproducibility.
