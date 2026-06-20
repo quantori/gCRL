@@ -1,9 +1,0 @@
-gamma,eigengene_mode,ae_standardize,train_loss_final,val_loss_final,mcc_real_mean,mcc_perm_mean,t_stat,p_value
-0p9,all_cells,none,0.0882,0.0886,0.4363,0.3733,7.6825,0.0
-0p9,all_cells,zscore,0.9478,0.9916,0.574,0.455,16.7743,0.0
-1p0,all_cells,none,0.0882,0.0886,0.3908,0.3872,0.4754,0.318289
-1p0,all_cells,zscore,0.9478,0.9916,0.5001,0.4617,5.5449,1e-06
-1p4,all_cells,none,0.0874,0.0879,0.4367,0.4304,1.5179,0.067656
-1p4,all_cells,zscore,0.938,0.9845,0.5021,0.4875,3.1459,0.001794
-2p5,all_cells,none,0.0874,0.0879,0.4302,0.377,9.1547,0.0
-2p5,all_cells,zscore,0.9336,0.981,0.4956,0.469,6.1999,0.0

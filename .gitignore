@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Environments
+.venv/
+.env
+*.env
+
+# Jupyter
+.ipynb_checkpoints/
+*.log
+
+# Large data files (use Git LFS or DVC instead)
+data/real/
+data/simulated/
+*.h5ad
+*.h5
+*.hdf5
+*.pkl
+*.npy
+*.npz
+*.pt
+*.pth
+*.parquet
+*.csv.gz
+
+# Results (model outputs, large arrays)
+results/real/
+results/figures/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code
+.claude/
