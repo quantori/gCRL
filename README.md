@@ -14,7 +14,7 @@ This repository contains the code for the paper:
 
 ---
 
-**gCRL** (graph-guided Causal Representation Learning) is a framework for learning structured latent representations of single-cell CRISPR perturbation data. It uses Gene Regulatory Networks (GRNs) as structural priors to align the latent space with biologically meaningful axes (eigengenes), enabling zero-shot generalisation to unseen combinations of perturbations.
+**gCRL** (GRN-informed Causal Representation Learning) is a framework for learning structured latent representations of single-cell CRISPR perturbation data. It uses Gene Regulatory Networks (GRNs) as structural priors to align the latent space with biologically meaningful axes (eigengenes), enabling zero-shot generalisation to unseen combinations of perturbations.
 
 Two model variants are provided: **gCRL-AE** (autoencoder) and **gCRL-VAE** (variational autoencoder).
 
