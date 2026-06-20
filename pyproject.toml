@@ -10,7 +10,11 @@ description = "gCRL-AE and gCRL-VAE: Causal Representation Learning with GRN pri
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Your Name" }]
+authors = [
+  { name = "Vincenzo Lagani", email = "vincenzo.lagani@gmail.com" },
+  { name = "Giorgi Sokhadze" },
+  { name = "Liliia Nigmetzianova" },
+]
 
 dependencies = [
   "anndata>=0.10",
@@ -22,7 +26,6 @@ dependencies = [
   "matplotlib",
   "tqdm",
   "umap-learn",
-  "tomli>=1.2.0; python_version<'3.11'",
 ]
 
 [tool.setuptools.packages.find]
@@ -31,5 +34,3 @@ where = ["src"]
 [tool.setuptools]
 package-dir = {"" = "src"}
 
-[project.scripts]
-gcrl-batch-sim = "gcrl.cli.batch_run_simulations:main"

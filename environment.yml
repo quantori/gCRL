@@ -13,18 +13,28 @@ dependencies:
   - pytorch
   - matplotlib
   - tqdm
+  - scipy
+  - networkx
+  - statsmodels
+
+  # GRN / community detection
+  - python-igraph
+  - leidenalg
+  - gseapy
+  - goatools
+
+  # Dimensionality reduction
+  - umap-learn
 
   # Development / testing tools
   - jupyterlab
   - notebook
   - pytest
+  - pytest-cov
   - black
   - flake8
   - isort
   - pre-commit
-  - pytest
-  - pytest-cov
 
   # Ensure pip is present
   - pip
-

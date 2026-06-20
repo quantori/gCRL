@@ -1,6 +1,19 @@
 
 # gCRL
 
+This repository contains the code for the paper:
+
+> **Bridging Gene Regulatory Networks and Causal Representation Learning in Single-Cell Genomics Data**
+> Vincenzo Lagani, Giorgi Sokhadze, Liliia Nigmetzianova, Robert Lehmann, Yiling Ma, Sumeer Ahmad Khan, Xabier Martinez de Morentin, Narsis A. Kiani, Mikel Hernaez, Alexander A. Lukyanov, Jesper Tegnér, David Gomez-Cabrero
+> *ICML 2026 Workshop GenBio*
+> [https://openreview.net/forum?id=OBH7Lv5JoV](https://openreview.net/forum?id=OBH7Lv5JoV)
+
+**Abstract:** Understanding gene regulatory mechanisms is key to advancing our capacity to interpret and manipulate cellular physiology, with significant implications for bioengineering and precision medicine. Two major computational paradigms, namely gene regulatory network (GRN) reconstruction and causal representation learning (CRL), offer distinct perspectives on transcriptional regulation. GRN methods focus on capturing detailed, fine-scale interactions among genes and transcription factors, whereas CRL seeks to identify a small set of latent variables that drive gene expression, providing a coarser but potentially more generalizable representation. In this work, we propose methods that incorporate GRN-derived structures into CRL models, guiding their training and enriching their biological interpretability. Computational experiments on scPerturb-seq datasets demonstrate that GRNs and CRL can work in concert, yielding biologically interpretable latent representations without sacrificing predictive performance.
+
+![GRN communities guide the CRL latent space: TF communities (left) are used as structural priors for the encoder–decoder architecture (right).](assets/Fig1_github.png)
+
+---
+
 **gCRL** (graph-guided Causal Representation Learning) is a framework for learning structured latent representations of single-cell CRISPR perturbation data. It uses Gene Regulatory Networks (GRNs) as structural priors to align the latent space with biologically meaningful axes (eigengenes), enabling zero-shot generalisation to unseen combinations of perturbations.
 
 Two model variants are provided: **gCRL-AE** (autoencoder) and **gCRL-VAE** (variational autoencoder).
@@ -71,6 +84,8 @@ Raw data files are not included in the repository. Download instructions for eac
 ## Repository layout
 
 ```
+assets/                    # figures used in this README
+
 src/gcrl/                  # Python package (import gcrl)
   data/                    # IO & preprocessing utilities
   grn/                     # GRN communities and eigengene computation
@@ -78,23 +93,25 @@ src/gcrl/                  # Python package (import gcrl)
   training/                # training loops, schedulers, callbacks
   alignment/               # latent-to-eigengene alignment & partial-MCC
   evaluation/              # metrics and plotting
-  utils/                   # seed, device, logging, config helpers
-
-configs/                   # YAML configurations for experiments
-
 notebooks/
   00_data_preprocessing/
     Joung2023_preprocessing/   # notebooks 0–3 for the Joung 2023 dataset
     Norman2019_preprocessing/  # notebooks 1–3 for the Norman 2019 dataset
   10_modeling_gcrl_ae/         # AE training and evaluation
   20_modeling_gcrl_vae/        # VAE training and evaluation
+  30_figures/                  # figure-generation notebooks and R scripts
 
 data/
+  example/                 # small synthetic dataset for the simple example notebook
   real/
     Joung2023/             # downloaded externally (see README therein)
     Norman2019/            # downloaded externally (see README therein)
+  reference/
+    ontologies/go-basic.obo  # Gene Ontology OBO file (tracked via Git LFS)
 
-results/                   # outputs produced by the modeling notebooks
+results/
+  figures/                 # figure outputs (png/svg) and intermediate data
+  real/                    # model outputs produced by the modeling notebooks
 
 tests/                     # unit tests
 ```
@@ -111,7 +128,7 @@ Notebooks within each preprocessing pipeline should be executed in order (0 → 
 |---|---|
 | `0_data_preprocessing.ipynb` | `gcrl` conda env |
 | `1_GRN_calculation.ipynb` | **CellOracle Docker** |
-| `2_TF_module_identification_50_1.0.ipynb` | `gcrl` conda env |
+| `2_TF_module_identification.ipynb` | `gcrl` conda env |
 | `3_data_preparation.ipynb` | `gcrl` conda env |
 
 ### Norman 2019 (`notebooks/00_data_preprocessing/Norman2019_preprocessing/`)
@@ -119,7 +136,7 @@ Notebooks within each preprocessing pipeline should be executed in order (0 → 
 | Notebook | Environment |
 |---|---|
 | `1_GRN_calculation.ipynb` | **CellOracle Docker** |
-| `2_TF_module_identification_40_1.1.ipynb` | `gcrl` conda env |
+| `2_TF_module_identification.ipynb` | `gcrl` conda env |
 | `3_data_preparation.ipynb` | `gcrl` conda env |
 
 ### Modeling (`notebooks/10_modeling_gcrl_ae/`, `notebooks/20_modeling_gcrl_vae/`)
@@ -130,4 +147,14 @@ All modeling notebooks use the `gcrl` conda environment.
 
 ## Citation
 
-*Citation information will be added upon publication.*
+If you use this code in your research, please cite:
+
+```bibtex
+@inproceedings{lagani2026bridging,
+  title     = {Bridging Gene Regulatory Networks and Causal Representation Learning in Single-Cell Genomics Data},
+  author    = {Lagani, Vincenzo and Sokhadze, Giorgi and Nigmetzianova, Liliia and Lehmann, Robert and Ma, Yiling and Khan, Sumeer Ahmad and Martinez de Morentin, Xabier and Kiani, Narsis A. and Hernaez, Mikel and Lukyanov, Alexander A. and Tegn{\'e}r, Jesper and Gomez-Cabrero, David},
+  booktitle = {ICML 2026 Workshop on Generative Models for Biology (GenBio)},
+  year      = {2026},
+  url       = {https://openreview.net/forum?id=OBH7Lv5JoV}
+}
+```

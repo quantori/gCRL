@@ -28,18 +28,12 @@ from .graph_construction import (
 from .clustering import (
     run_single_layer_leiden_reg,
     run_single_layer_leiden_cot,
-    run_multiplex_leiden,
-    sweep_hyperparams,
 )
 
 # Stability assessment
 from .stability import (
-    is_trivial_partition,
     filter_trivial_partitions,
-    align_labels_to_reference,
-    variation_of_information,
     partition_stability_diagnostics,
-    summarize_all_stabilities,
 )
 
 # Consensus clustering
@@ -47,7 +41,6 @@ from .consensus import (
     build_coassociation_matrix,
     consensus_partition_from_coassoc,
     consensus_partition_majority_vote,
-    consensus_partition_hierarchical,
     community_stats,
 )
 
@@ -78,20 +71,13 @@ __all__ = [
     # Clustering
     "run_single_layer_leiden_reg",
     "run_single_layer_leiden_cot",
-    "run_multiplex_leiden",
-    "sweep_hyperparams",
     # Stability
-    "is_trivial_partition",
     "filter_trivial_partitions",
-    "align_labels_to_reference",
-    "variation_of_information",
     "partition_stability_diagnostics",
-    "summarize_all_stabilities",
     # Consensus
     "build_coassociation_matrix",
     "consensus_partition_from_coassoc",
     "consensus_partition_majority_vote",
-    "consensus_partition_hierarchical",
     "community_stats",
     # Enrichment
     "build_cluster_gene_sets",
