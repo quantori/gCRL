@@ -22,7 +22,7 @@ Two model variants are provided: **gCRL-AE** (autoencoder) and **gCRL-VAE** (var
 
 ## Installation
 
-The project requires **two separate environments** that must be kept isolated because CellOracle has dependency conflicts with PyTorch.
+The project requires **two separate environments**:
 
 | Environment | Purpose | Notebooks |
 |---|---|---|
@@ -77,7 +77,7 @@ For setup and usage details refer to the [official CellOracle documentation](htt
 Raw data files are not included in the repository. Download instructions for each dataset are provided in the corresponding data folders:
 
 - [`data/real/Joung2023/README.md`](data/real/Joung2023/README.md) — Joung et al. 2023 TF Atlas (GEO: GSE217460, GSE217066)
-- `data/real/Norman2019/README.md` — Norman et al. 2019 (GEO: GSE133344)
+- [`data/real/Norman2019/README.md`](data/real/Norman2019/README.md) — Norman et al. 2019 (GEO: GSE133344)
 
 ---
 

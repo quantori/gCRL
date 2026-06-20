@@ -17,7 +17,13 @@ build/
 *.log
 
 # Large data files (use Git LFS or DVC instead)
-data/real/
+data/real/*
+!data/real/Joung2023/
+data/real/Joung2023/*
+!data/real/Joung2023/README.md
+!data/real/Norman2019/
+data/real/Norman2019/*
+!data/real/Norman2019/README.md
 data/simulated/
 *.h5ad
 *.h5
