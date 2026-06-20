@@ -145,6 +145,12 @@ All modeling notebooks use the `gcrl` conda environment.
 
 ---
 
+## Acknowledgements
+
+The original code for the discrepancy-VAE used in our experiments is available at [https://github.com/uhlerlab/discrepancy_vae](https://github.com/uhlerlab/discrepancy_vae).
+
+---
+
 ## Citation
 
 If you use this code in your research, please cite:
